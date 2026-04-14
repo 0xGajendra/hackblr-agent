@@ -3,6 +3,11 @@ import OpenAI from "openai";
 import dotenv from "dotenv";
 dotenv.config();
 
+export interface Message {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 const groq = new OpenAI({
@@ -30,16 +35,14 @@ export async function embedForQuery(text: string): Promise<number[]> {
 
 export async function chat(
   systemPrompt: string,
-  userMessage: string,
+  messages: Message[],
+  maxTokens = 150,
 ): Promise<string> {
   console.log(`🤖 Calling Groq...`);
   const response = await groq.chat.completions.create({
-    model: "llama-3.1-8b-instant",
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userMessage },
-    ],
-    max_tokens: 150,
+    model: "llama-3.3-70b-versatile",
+    messages: [{ role: "system", content: systemPrompt }, ...messages],
+    max_tokens: maxTokens,
   });
   const answer = response.choices[0].message.content || "";
   console.log(`✅ Got response from Groq`);
