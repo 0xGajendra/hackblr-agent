@@ -54,6 +54,60 @@ function intentColor(intent: Intent): string {
   return "#10b981";
 }
 
+function extractVapiErrorMessage(event: unknown): string {
+  const fallback = "Unknown Vapi error";
+
+  if (typeof event === "string") {
+    return event;
+  }
+
+  if (!event || typeof event !== "object") {
+    return fallback;
+  }
+
+  const e = event as {
+    message?: string;
+    error?: {
+      message?: string;
+      errorMsg?: string;
+      msg?: string;
+      error?: string;
+      details?: unknown;
+      reason?: string;
+    };
+    reason?: string;
+    type?: string;
+  };
+
+  const candidates = [
+    e.error?.message,
+    e.error?.errorMsg,
+    e.error?.msg,
+    e.error?.error,
+    e.reason,
+    e.error?.reason,
+    e.message,
+  ].filter((v): v is string => typeof v === "string" && v.trim().length > 0);
+
+  if (candidates.length) {
+    return candidates[0];
+  }
+
+  if (e.error) {
+    try {
+      return JSON.stringify(e.error);
+    } catch {
+      // fall through to generic event stringify
+    }
+  }
+
+  try {
+    return JSON.stringify(event);
+  } catch {
+    return e.type ? `${fallback} (${e.type})` : fallback;
+  }
+}
+
 export default function HomePage() {
   const [code, setCode] = useState("");
   const [filename, setFilename] = useState("pasted-code.ts");
@@ -66,6 +120,7 @@ export default function HomePage() {
   const [isCallActive, setIsCallActive] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
   const [latestUserText, setLatestUserText] = useState("");
+  const [vapiDebug, setVapiDebug] = useState("Idle");
   const [backendHealthy, setBackendHealthy] = useState<boolean | null>(null);
   const [activeSessionsCount, setActiveSessionsCount] = useState(0);
   const [sessionReady, setSessionReady] = useState<boolean | null>(null);
@@ -344,19 +399,46 @@ export default function HomePage() {
         });
 
         client.on("call-start", () => setIsCallActive(true));
-        client.on("call-end", () => setIsCallActive(false));
+        client.on("call-end", () => {
+          setIsCallActive(false);
+          setVapiDebug("Call ended");
+        });
+        client.on(
+          "call-start-progress",
+          (event: { stage?: string; status?: string }) => {
+            setVapiDebug(
+              `Start: ${event?.stage || "unknown"} (${event?.status || "pending"})`,
+            );
+          },
+        );
+        client.on("call-start-failed", (event: { error?: string }) => {
+          const msg = extractVapiErrorMessage(event);
+          setVapiDebug(`Call start failed: ${msg}`);
+          setIngestStatus(`Vapi error: ${msg}`);
+        });
+        client.on("error", (event: unknown) => {
+          console.error("Vapi error event", event);
+          const msg = extractVapiErrorMessage(event);
+          setVapiDebug(`Error: ${msg}`);
+          setIngestStatus(`Vapi error: ${msg}`);
+        });
 
         vapiRef.current = client;
       }
 
+      setVapiDebug("Starting call...");
       await vapiRef.current.start(vapiAssistantId, {
         metadata: { sessionId },
       });
       setIsCallActive(true);
+      setVapiDebug("Call started");
       setIngestStatus(`Call started with session ${sessionId}`);
     } catch (error) {
       console.error(error);
-      setIngestStatus("Failed to start Vapi call");
+      const msg =
+        error instanceof Error ? error.message : "Failed to start Vapi call";
+      setVapiDebug(`Start failed: ${msg}`);
+      setIngestStatus(`Failed to start Vapi call: ${msg}`);
     }
   }
 
@@ -433,6 +515,7 @@ export default function HomePage() {
           </button>
         </div>
         <small>{ingestStatus}</small>
+        <small>Vapi status: {vapiDebug}</small>
       </section>
 
       <section className="grid">

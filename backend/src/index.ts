@@ -209,6 +209,35 @@ async function basicRagResponse(
   };
 }
 
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
+  let timeoutId: NodeJS.Timeout | null = null;
+
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }) as Promise<T>;
+}
+
+function fallbackAssistantMessage(userMessage: string): string {
+  const safeMessage = userMessage?.trim();
+  if (!safeMessage) {
+    return "I’m here and ready. Share the code issue and I’ll help step by step.";
+  }
+
+  return "I hit a temporary provider issue while processing that. Please repeat your question once and I’ll continue.";
+}
+
 app.post("/ingest/paste", async (req: Request, res: Response) => {
   try {
     const code = req.body?.code;
@@ -520,6 +549,7 @@ app.get("/", (_req: Request, res: Response) => {
 
 app.post("/llm", async (req: Request, res: Response) => {
   try {
+    const startedAt = Date.now();
     cleanupExpiredSessions();
 
     const requestMessages = (req.body?.messages || []) as {
@@ -618,14 +648,22 @@ app.post("/llm", async (req: Request, res: Response) => {
           " Identify which file and function this error likely originates from based on the context provided." +
           fileHint;
       } else {
-        const basic = await basicRagResponse(userMessage, ragSessionId);
+        const basic = await withTimeout(
+          basicRagResponse(userMessage, ragSessionId),
+          4500,
+          "basicRagResponse",
+        );
         context = basic.context;
         searchResultsCount = basic.resultsCount;
       }
     } catch (featureErr) {
       console.error("⚠️ Feature fallback to basic RAG:", featureErr);
       try {
-        const fallback = await basicRagResponse(userMessage, ragSessionId);
+        const fallback = await withTimeout(
+          basicRagResponse(userMessage, ragSessionId),
+          3500,
+          "fallback basicRagResponse",
+        );
         context = fallback.context;
         searchResultsCount = fallback.resultsCount;
       } catch (fallbackErr) {
@@ -652,11 +690,18 @@ app.post("/llm", async (req: Request, res: Response) => {
 
     let answer = "";
     try {
-      answer = await chat(dynamicSystemPrompt, llmMessages, maxTokens);
+      answer = await withTimeout(
+        chat(dynamicSystemPrompt, llmMessages, maxTokens),
+        6000,
+        "chat",
+      );
     } catch (chatErr) {
       console.error("⚠️ Chat failed, retrying basic response:", chatErr);
-      answer =
-        "I hit an issue while analyzing that. Can you rephrase the question?";
+      answer = fallbackAssistantMessage(userMessage);
+    }
+
+    if (!answer || !answer.trim()) {
+      answer = fallbackAssistantMessage(userMessage);
     }
 
     if (
@@ -686,6 +731,7 @@ app.post("/llm", async (req: Request, res: Response) => {
     });
 
     console.log(`🤖 Response: ${answer}\n`);
+    console.log(`⏱️ /llm latency: ${Date.now() - startedAt}ms`);
 
     res.json({
       id: "chatcmpl-hackblr",
