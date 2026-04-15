@@ -3,22 +3,51 @@ import cors from "cors";
 import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
-import { embedForQuery, chat, Message } from "./gemini";
-import { qdrant, COLLECTION, ensureCollection } from "./qdrant";
+import { embedForQuery, chat } from "./gemini";
+import {
+  qdrant,
+  COLLECTION,
+  ensureCollection,
+  searchBySession,
+  scrollBySession,
+} from "./qdrant";
+import { ingestChunks } from "./ingestion";
+import {
+  createSession as createIngestionSession,
+  getSession as getIngestionSession,
+  listSessions,
+  markReady,
+} from "./sessions";
+import { Message, Session, SessionMeta } from "./types";
 dotenv.config();
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-
-interface Session {
-  messages: Message[];
-  lastActive: number;
-}
+app.use(
+  cors({
+    origin: [
+      "http://localhost:3000",
+      "http://localhost:3001",
+      process.env.FRONTEND_URL || "*",
+    ],
+    methods: ["GET", "POST", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
+app.use(express.json({ limit: "10mb" }));
 
 interface ChunkPayload {
   file?: string;
   text?: string;
+}
+
+interface GithubTreeEntry {
+  path: string;
+  type: string;
+  size?: number;
+}
+
+interface GithubTreeResponse {
+  tree?: GithubTreeEntry[];
 }
 
 type Intent = "error" | "audit" | "navigate" | "explain" | "debug";
@@ -72,7 +101,7 @@ function cleanupExpiredSessions() {
   }
 }
 
-function getSession(callId: string): Session {
+function getConversationSession(callId: string): Session {
   const existing = sessions.get(callId);
   if (existing) {
     existing.lastActive = Date.now();
@@ -81,6 +110,34 @@ function getSession(callId: string): Session {
   const created: Session = { messages: [], lastActive: Date.now() };
   sessions.set(callId, created);
   return created;
+}
+
+function parseGithubRepo(
+  repoUrl: string,
+): { owner: string; repo: string } | null {
+  const match = repoUrl
+    .trim()
+    .match(/^https?:\/\/github\.com\/([^\/]+)\/([^\/#?]+)(?:[\/#?].*)?$/i);
+  if (!match) {
+    return null;
+  }
+
+  const owner = match[1];
+  const repo = match[2].replace(/\.git$/i, "");
+
+  if (!owner || !repo) {
+    return null;
+  }
+
+  return { owner, repo };
+}
+
+function isIngestionSessionReady(sessionId?: string): boolean {
+  if (!sessionId) {
+    return false;
+  }
+  const session = getIngestionSession(sessionId);
+  return Boolean(session?.ready);
 }
 
 function trimHistory(messages: Message[]): Message[] {
@@ -130,18 +187,258 @@ function formatContextFromResults(
 
 async function basicRagResponse(
   userMessage: string,
+  sessionId?: string,
 ): Promise<{ context: string; resultsCount: number }> {
   const queryVector = await embedForQuery(userMessage);
-  const searchResults = await qdrant.search(COLLECTION, {
-    vector: queryVector,
-    limit: 3,
-    score_threshold: 0.5,
-  });
+  const searchResults = sessionId
+    ? await searchBySession(sessionId, queryVector, 3, 0.5)
+    : await qdrant.search(COLLECTION, {
+        vector: queryVector,
+        limit: 3,
+        score_threshold: 0.5,
+      });
+
   return {
     context: formatContextFromResults(searchResults),
     resultsCount: searchResults.length,
   };
 }
+
+app.post("/ingest/paste", async (req: Request, res: Response) => {
+  try {
+    const code = req.body?.code;
+    const filenameRaw = req.body?.filename;
+    const existingSessionId = req.body?.sessionId;
+
+    if (typeof code !== "string" || !code.trim()) {
+      return res.status(400).json({ error: "code must be a non-empty string" });
+    }
+
+    if (code.length > 500000) {
+      return res
+        .status(400)
+        .json({ error: "code exceeds max length of 500000 characters" });
+    }
+
+    const filename =
+      typeof filenameRaw === "string" && filenameRaw.trim()
+        ? filenameRaw.trim()
+        : "pasted-code.ts";
+
+    let sessionId =
+      typeof existingSessionId === "string" && existingSessionId.trim()
+        ? existingSessionId.trim()
+        : "";
+
+    let meta = sessionId ? getIngestionSession(sessionId) : undefined;
+    if (!meta) {
+      sessionId = createIngestionSession("paste", filename);
+      meta = getIngestionSession(sessionId);
+    }
+
+    const chunks = await ingestChunks(sessionId, code, filename);
+    const totalChunks = (meta?.chunkCount || 0) + chunks;
+    markReady(sessionId, totalChunks);
+
+    console.log(
+      `🎉 Session ${sessionId} ready: ${totalChunks} total chunks from 1 files`,
+    );
+
+    return res.json({
+      sessionId,
+      filename,
+      chunks,
+      ready: true,
+    });
+  } catch (err) {
+    console.error("❌ /ingest/paste failed:", err);
+    return res.status(500).json({ error: "Failed to ingest pasted code" });
+  }
+});
+
+app.post("/ingest/github", async (req: Request, res: Response) => {
+  try {
+    const repoUrl = String(req.body?.repoUrl || "").trim();
+    const requestedBranch = String(req.body?.branch || "main").trim() || "main";
+
+    if (!repoUrl) {
+      return res.status(400).json({ error: "repoUrl is required" });
+    }
+
+    const parsed = parseGithubRepo(repoUrl);
+    if (!parsed) {
+      return res.status(400).json({ error: "Invalid GitHub repository URL" });
+    }
+
+    const { owner, repo } = parsed;
+    const branches = [...new Set([requestedBranch, "main", "master"])];
+
+    let resolvedBranch: string | null = null;
+    let treeData: GithubTreeResponse | null = null;
+
+    for (const branch of branches) {
+      console.log(
+        `🐙 Fetching GitHub repo: ${owner}/${repo} branch: ${branch}`,
+      );
+      const treeRes = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
+        {
+          headers: { "User-Agent": "hackblr-dev-agent" },
+        },
+      );
+
+      if (treeRes.status === 403) {
+        return res
+          .status(429)
+          .json({ error: "GitHub rate limit hit, try again in a minute" });
+      }
+
+      if (treeRes.status === 404) {
+        continue;
+      }
+
+      if (!treeRes.ok) {
+        return res.status(502).json({
+          error: `GitHub API request failed with status ${treeRes.status}`,
+        });
+      }
+
+      treeData = (await treeRes.json()) as GithubTreeResponse;
+      resolvedBranch = branch;
+      break;
+    }
+
+    if (!treeData || !resolvedBranch) {
+      return res
+        .status(404)
+        .json({ error: "Repository not found or is private" });
+    }
+
+    const allowedExtensions = new Set([
+      ".ts",
+      ".js",
+      ".py",
+      ".go",
+      ".java",
+      ".cpp",
+      ".c",
+      ".md",
+      ".json",
+    ]);
+
+    const files = (treeData.tree || [])
+      .filter((entry) => entry.type === "blob")
+      .filter((entry) => {
+        const lowerPath = entry.path.toLowerCase();
+        if (lowerPath.endsWith(".env.example")) {
+          return true;
+        }
+
+        const dotIndex = lowerPath.lastIndexOf(".");
+        if (dotIndex < 0) {
+          return false;
+        }
+
+        const ext = lowerPath.slice(dotIndex);
+        return allowedExtensions.has(ext);
+      })
+      .filter((entry) => (entry.size || 0) <= 100 * 1024)
+      .slice(0, 30);
+
+    console.log(`📁 Found ${files.length} files to ingest`);
+
+    const sessionId = createIngestionSession("github", repoUrl);
+    let totalChunks = 0;
+    let filesIngested = 0;
+
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
+      console.log(`📥 [${i + 1}/${files.length}] Ingesting ${file.path}...`);
+
+      try {
+        const rawRes = await fetch(
+          `https://raw.githubusercontent.com/${owner}/${repo}/${resolvedBranch}/${file.path}`,
+          {
+            headers: { "User-Agent": "hackblr-dev-agent" },
+          },
+        );
+
+        if (rawRes.status === 403) {
+          return res
+            .status(429)
+            .json({ error: "GitHub rate limit hit, try again in a minute" });
+        }
+
+        if (!rawRes.ok) {
+          console.warn(`⚠️ Skipping ${file.path}: HTTP ${rawRes.status}`);
+          continue;
+        }
+
+        const content = await rawRes.text();
+        if (!content.trim()) {
+          continue;
+        }
+
+        const chunks = await ingestChunks(sessionId, content, file.path);
+        totalChunks += chunks;
+        filesIngested += 1;
+      } catch (fileErr) {
+        console.error(`⚠️ Failed to ingest ${file.path}:`, fileErr);
+      }
+    }
+
+    markReady(sessionId, totalChunks);
+    console.log(
+      `🎉 Session ${sessionId} ready: ${totalChunks} total chunks from ${filesIngested} files`,
+    );
+
+    return res.json({
+      sessionId,
+      repo: `${owner}/${repo}`,
+      filesIngested,
+      totalChunks,
+      ready: true,
+    });
+  } catch (err) {
+    console.error("❌ /ingest/github failed:", err);
+    return res
+      .status(500)
+      .json({ error: "Failed to ingest GitHub repository" });
+  }
+});
+
+app.get("/ingest/status/:sessionId", (req: Request, res: Response) => {
+  try {
+    const sessionId = String(req.params.sessionId || "").trim();
+    const session = getIngestionSession(sessionId);
+
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+
+    return res.json({
+      sessionId: session.sessionId,
+      ready: session.ready,
+      source: session.source,
+      label: session.label,
+      chunkCount: session.chunkCount,
+      createdAt: session.createdAt,
+    });
+  } catch (err) {
+    console.error("❌ /ingest/status failed:", err);
+    return res.status(500).json({ error: "Failed to fetch session status" });
+  }
+});
+
+app.get("/sessions", (_req: Request, res: Response) => {
+  try {
+    const activeSessions = listSessions();
+    return res.json({ sessions: activeSessions });
+  } catch (err) {
+    console.error("❌ /sessions failed:", err);
+    return res.status(500).json({ error: "Failed to list sessions" });
+  }
+});
 
 // Health check
 app.get("/", (_req: Request, res: Response) => {
@@ -160,10 +457,17 @@ app.post("/llm", async (req: Request, res: Response) => {
       [...requestMessages].reverse().find((m) => m.role === "user")?.content ||
       "";
     const callId = String(req.body?.call?.id || "default-session");
-    const session = getSession(callId);
+    const session = getConversationSession(callId);
     const intent = detectIntent(userMessage);
+    const incomingSessionId = req.body?.call?.metadata?.sessionId as
+      | string
+      | undefined;
+    const ragSessionId = isIngestionSessionReady(incomingSessionId)
+      ? incomingSessionId
+      : undefined;
 
     console.log(`🎯 Intent: ${intent}`);
+    console.log(`🔑 Session: ${ragSessionId ?? "global"}`);
     console.log(
       `🧠 Session: ${callId} — ${session.messages.length} messages in history`,
     );
@@ -176,12 +480,16 @@ app.post("/llm", async (req: Request, res: Response) => {
 
     try {
       if (intent === "audit") {
-        const scrolled = await qdrant.scroll(COLLECTION, {
-          limit: 50,
-          with_payload: true,
-          with_vector: false,
-        });
-        const points = scrolled.points || [];
+        const points = ragSessionId
+          ? await scrollBySession(ragSessionId, 50)
+          : (
+              await qdrant.scroll(COLLECTION, {
+                limit: 50,
+                with_payload: true,
+                with_vector: false,
+              })
+            ).points || [];
+
         context = formatContextFromResults(points);
         searchResultsCount = points.length;
         console.log(`📊 Audit mode: fetched ${points.length} chunks`);
@@ -197,17 +505,21 @@ app.post("/llm", async (req: Request, res: Response) => {
         ]);
 
         const [standardResults, keywordResults] = await Promise.all([
-          qdrant.search(COLLECTION, {
-            vector: standardVector,
-            limit: 3,
-            score_threshold: 0.5,
-          }),
+          ragSessionId
+            ? searchBySession(ragSessionId, standardVector, 3, 0.5)
+            : qdrant.search(COLLECTION, {
+                vector: standardVector,
+                limit: 3,
+                score_threshold: 0.5,
+              }),
           keywordVector
-            ? qdrant.search(COLLECTION, {
-                vector: keywordVector,
-                limit: 2,
-                score_threshold: 0.3,
-              })
+            ? ragSessionId
+              ? searchBySession(ragSessionId, keywordVector, 2, 0.3)
+              : qdrant.search(COLLECTION, {
+                  vector: keywordVector,
+                  limit: 2,
+                  score_threshold: 0.3,
+                })
             : Promise.resolve([]),
         ]);
 
@@ -233,14 +545,14 @@ app.post("/llm", async (req: Request, res: Response) => {
           " Identify which file and function this error likely originates from based on the context provided." +
           fileHint;
       } else {
-        const basic = await basicRagResponse(userMessage);
+        const basic = await basicRagResponse(userMessage, ragSessionId);
         context = basic.context;
         searchResultsCount = basic.resultsCount;
       }
     } catch (featureErr) {
       console.error("⚠️ Feature fallback to basic RAG:", featureErr);
       try {
-        const fallback = await basicRagResponse(userMessage);
+        const fallback = await basicRagResponse(userMessage, ragSessionId);
         context = fallback.context;
         searchResultsCount = fallback.resultsCount;
       } catch (fallbackErr) {
@@ -305,22 +617,29 @@ app.post("/llm", async (req: Request, res: Response) => {
     res.json({
       id: "chatcmpl-hackblr",
       object: "chat.completion",
-      choices: [{
-        index: 0,
-        message: { role: "assistant", content: answer },
-        finish_reason: "stop"
-      }]
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: answer },
+          finish_reason: "stop",
+        },
+      ],
     });
   } catch (err) {
     console.error("❌ Error:", err);
     res.json({
       id: "chatcmpl-error",
       object: "chat.completion",
-      choices: [{
-        index: 0,
-        message: { role: "assistant", content: "Something went wrong, try again." },
-        finish_reason: "stop"
-      }]
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: "Something went wrong, try again.",
+          },
+          finish_reason: "stop",
+        },
+      ],
     });
   }
 });
