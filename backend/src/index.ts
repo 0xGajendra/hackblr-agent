@@ -50,6 +50,11 @@ interface GithubTreeResponse {
   tree?: GithubTreeEntry[];
 }
 
+interface UploadFileInput {
+  filename?: string;
+  content?: string;
+}
+
 type Intent = "error" | "audit" | "navigate" | "explain" | "debug";
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -253,6 +258,74 @@ app.post("/ingest/paste", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("❌ /ingest/paste failed:", err);
     return res.status(500).json({ error: "Failed to ingest pasted code" });
+  }
+});
+
+app.post("/ingest/upload", async (req: Request, res: Response) => {
+  try {
+    const files = Array.isArray(req.body?.files)
+      ? (req.body.files as UploadFileInput[])
+      : [];
+    const existingSessionId = req.body?.sessionId;
+
+    if (!files.length) {
+      return res.status(400).json({ error: "files must be a non-empty array" });
+    }
+
+    if (files.length > 30) {
+      return res.status(400).json({ error: "Maximum 30 files per upload" });
+    }
+
+    let sessionId =
+      typeof existingSessionId === "string" && existingSessionId.trim()
+        ? existingSessionId.trim()
+        : "";
+
+    let meta = sessionId ? getIngestionSession(sessionId) : undefined;
+    if (!meta) {
+      sessionId = createIngestionSession("upload", "Uploaded Files");
+      meta = getIngestionSession(sessionId);
+    }
+
+    let totalChunks = meta?.chunkCount || 0;
+    let filesIngested = 0;
+
+    for (const file of files) {
+      const filename =
+        typeof file.filename === "string" && file.filename.trim()
+          ? file.filename.trim()
+          : `upload-${filesIngested + 1}.txt`;
+      const content = typeof file.content === "string" ? file.content : "";
+
+      if (!content.trim()) {
+        continue;
+      }
+
+      if (content.length > 500000) {
+        return res.status(400).json({
+          error: `File ${filename} exceeds max length of 500000 characters`,
+        });
+      }
+
+      const chunks = await ingestChunks(sessionId, content, filename);
+      totalChunks += chunks;
+      filesIngested += 1;
+    }
+
+    markReady(sessionId, totalChunks);
+    console.log(
+      `🎉 Session ${sessionId} ready: ${totalChunks} total chunks from ${filesIngested} files`,
+    );
+
+    return res.json({
+      sessionId,
+      filesIngested,
+      totalChunks,
+      ready: true,
+    });
+  } catch (err) {
+    console.error("❌ /ingest/upload failed:", err);
+    return res.status(500).json({ error: "Failed to ingest uploaded files" });
   }
 });
 
