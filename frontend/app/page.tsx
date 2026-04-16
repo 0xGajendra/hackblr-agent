@@ -47,11 +47,11 @@ function detectIntent(text: string): Intent {
 }
 
 function intentColor(intent: Intent): string {
-  if (intent === "error") return "#ef4444";
-  if (intent === "audit") return "#f59e0b";
-  if (intent === "debug") return "#8b5cf6";
-  if (intent === "navigate") return "#06b6d4";
-  return "#10b981";
+  if (intent === "error") return "oklch(0.6271 0.1936 33.3390)";
+  if (intent === "audit") return "oklch(0.9200 0.0651 74.3695)";
+  if (intent === "debug") return "oklch(0.4341 0.0392 41.9938)";
+  if (intent === "navigate") return "oklch(0.9200 0.0651 74.3695)";
+  return "oklch(0.5775 0.1548 131.7671)";
 }
 
 function extractVapiErrorMessage(event: unknown): string {
@@ -456,78 +456,68 @@ export default function HomePage() {
 
   return (
     <main className="page">
-      <section className="banner card">
-        <div className="bannerItem">
+      <header className="header">
+        <div>
+          <h1>HackBLR</h1>
+          <p className="subtitle">Voice-first developer assistant</p>
+        </div>
+      </header>
+
+      <div className="status">
+        <div className="statusItem">
           <span>Backend</span>
-          <strong className={backendHealthy ? "ok" : "bad"}>
+          <span className={`value ${backendHealthy ? "ok" : "bad"}`}>
             {backendHealthy === null
               ? "Checking..."
               : backendHealthy
-                ? "Healthy"
-                : "Unavailable"}
-          </strong>
+              ? "Online"
+              : "Offline"}
+          </span>
         </div>
-        <div className="bannerItem">
-          <span>Active ingestion sessions</span>
-          <strong>{activeSessionsCount}</strong>
+        <div className="statusItem">
+          <span>Active Sessions</span>
+          <span className="value">{activeSessionsCount}</span>
         </div>
-        <div className="bannerItem">
-          <span>Current session</span>
-          <strong>{sessionId || "Not created"}</strong>
+        <div className="statusItem">
+          <span>Current Session</span>
+          <span className="value">{sessionId ? sessionId.slice(0, 8) + "..." : "None"}</span>
         </div>
-        <div className="bannerItem">
-          <span>Session status</span>
-          <strong>
+        <div className="statusItem">
+          <span>Status</span>
+          <span className={`value ${sessionReady ? "ok" : ""}`}>
             {sessionReady === null
               ? "Unknown"
               : sessionReady
-                ? `Ready${sessionChunkCount !== null ? ` (${sessionChunkCount} chunks)` : ""}`
-                : "Not ready"}
-          </strong>
-        </div>
-      </section>
-
-      <section className="hero card">
-        <h1>HackBLR Dev Agent</h1>
-        <p>
-          Voice-first AI copilot for code debugging, audits, and live repository
-          Q&amp;A.
-        </p>
-        <div className="intentRow">
-          <span className="label">Detected intent</span>
-          <span
-            className="badge"
-            style={{ backgroundColor: intentColor(currentIntent) }}
-          >
-            {currentIntent.toUpperCase()}
+              ? `${sessionChunkCount} chunks`
+              : "Not ready"}
           </span>
+        </div>
+      </div>
+
+      <section className="hero">
+        <h2>Talk to your code</h2>
+        <p>Ask about errors, audit code, or explain how anything works</p>
+        <div className="intentBadge">
+          <span>Intent:</span>
+          <span>{currentIntent.toUpperCase()}</span>
         </div>
         <div className="buttons">
           <button onClick={startCall} disabled={loading || isCallActive}>
-            Talk to Dev Agent
+            {isCallActive ? "Call Active" : "Start Call"}
           </button>
-          <button
-            className="secondary"
-            onClick={stopCall}
-            disabled={!isCallActive}
-          >
+          <button className="secondary" onClick={stopCall} disabled={!isCallActive}>
             End Call
           </button>
         </div>
         <small>{ingestStatus}</small>
-        <small>Vapi status: {vapiDebug}</small>
       </section>
 
-      <section className="grid">
+      <div className="grid">
         <div className="card">
-          <h2>Demo codebase selector</h2>
+          <h3>Demo Codebases</h3>
           <div className="demoRow">
             {DEMO_CODEBASES.map((item, i) => (
-              <button
-                key={item.label}
-                className="secondary"
-                onClick={() => ingestDemo(i)}
-              >
+              <button key={item.label} className="secondary" onClick={() => ingestDemo(i)}>
                 {item.label}
               </button>
             ))}
@@ -535,7 +525,7 @@ export default function HomePage() {
         </div>
 
         <div className="card">
-          <h2>Paste code</h2>
+          <h3>Paste Code</h3>
           <input
             value={filename}
             onChange={(e) => setFilename(e.target.value)}
@@ -545,15 +535,14 @@ export default function HomePage() {
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Paste your code here..."
-            rows={8}
           />
           <button onClick={ingestPaste} disabled={loading || !code.trim()}>
-            Ingest pasted code
+            Ingest Code
           </button>
         </div>
 
         <div className="card">
-          <h2>Ingest GitHub repo</h2>
+          <h3>GitHub Repository</h3>
           <input
             value={repoUrl}
             onChange={(e) => setRepoUrl(e.target.value)}
@@ -562,52 +551,53 @@ export default function HomePage() {
           <input
             value={branch}
             onChange={(e) => setBranch(e.target.value)}
-            placeholder="main"
+            placeholder="Branch (default: main)"
           />
           <button onClick={ingestGithub} disabled={loading || !repoUrl.trim()}>
-            Ingest from GitHub
+            Ingest Repo
           </button>
         </div>
 
         <div className="card">
-          <h2>Upload files</h2>
-          <input
-            type="file"
-            multiple
-            onChange={(e) =>
-              setUploadedFiles(e.target.files ? Array.from(e.target.files) : [])
-            }
-          />
+          <h3>Upload Files</h3>
+          <div className="fileInput">
+            <input
+              type="file"
+              multiple
+              onChange={(e) =>
+                setUploadedFiles(e.target.files ? Array.from(e.target.files) : [])
+              }
+            />
+          </div>
           {uploadedFiles.length > 0 && (
-            <p className="muted uploadMeta">
-              {uploadedFiles.length} file(s) selected:{" "}
-              {uploadedFiles.map((file) => file.name).join(", ")}
+            <p className="selectedFiles">
+              {uploadedFiles.length} file(s): {uploadedFiles.map((f) => f.name).join(", ")}
             </p>
           )}
           <button
             onClick={ingestUpload}
             disabled={loading || uploadedFiles.length === 0}
           >
-            Ingest uploaded files
+            Upload Files
           </button>
         </div>
 
         <div className="card transcript">
-          <h2>Live transcript</h2>
+          <h3>Live Transcript</h3>
           {transcript.length === 0 ? (
-            <p className="muted">No transcript yet. Start a call and speak.</p>
+            <p className="empty">No transcript yet. Start a call and speak.</p>
           ) : (
-            <div className="list">
+            <div className="transcriptList">
               {transcript.map((line) => (
-                <div key={line.id} className={`line ${line.role}`}>
-                  <strong>{line.role === "user" ? "You" : "Agent"}:</strong>{" "}
+                <div key={line.id} className={`transcriptLine ${line.role}`}>
+                  <strong>{line.role === "user" ? "You" : "Agent"}</strong>
                   {line.text}
                 </div>
               ))}
             </div>
           )}
         </div>
-      </section>
+      </div>
     </main>
   );
 }
