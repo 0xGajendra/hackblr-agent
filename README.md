@@ -6,7 +6,7 @@ Voice-first developer assistant that lets you talk to your codebase. Ask about e
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/hackblr.git
+git clone https://github.com/0xGajendra/hackblr-agent.git
 cd hackblr
 ```
 

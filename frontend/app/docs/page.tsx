@@ -49,7 +49,7 @@ export default function DocsPage() {
         <div className="card">
           <h3>1. Backend Setup</h3>
           <pre className="code-block">{`# Clone the repo
-git clone https://github.com/your-org/hackblr.git
+git clone https://github.com/0xGajendra/hackblr-agent.git
 cd hackblr/backend
 
 # Install dependencies
@@ -243,12 +243,12 @@ npm run dev`}</pre>
         <h3>GitHub Repository</h3>
         <p className="docs-text">
           <a
-            href="https://github.com/your-org/hackblr"
+            href="https://github.com/0xGajendra/hackblr-agent"
             target="_blank"
             rel="noopener noreferrer"
             className="repo-link"
           >
-            https://github.com/your-org/hackblr
+            https://github.com/0xGajendra/hackblr-agent
           </a>
         </p>
       </section>
