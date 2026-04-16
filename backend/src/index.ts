@@ -583,6 +583,7 @@ const handleLlmRequest = async (req: Request, res: Response) => {
       ? mappedSessionId
       : undefined;
 
+    console.log(`🔍 /llm: callId=${callId}, incomingSessionId=${incomingSessionId}, mappedSessionId=${mappedSessionId}, resolvedRagSession=${ragSessionId}`);
     console.log(`🎯 Intent: ${intent}`);
     console.log(`🔑 Session: ${ragSessionId ?? "global"}`);
     console.log(
@@ -807,9 +808,11 @@ Start with "In this session,"`,
       const incomingSessionId = body?.call?.metadata?.sessionId as string | undefined;
       const ragSessionId = isIngestionSessionReady(incomingSessionId) ? incomingSessionId : undefined;
 
-      if (callId && ragSessionId) {
-        setRagSession(callId, ragSessionId);
-        console.log(`🔗 Mapped call ${callId} -> RAG session ${ragSessionId}`);
+      console.log(`🔍 Vapi webhook: callId=${callId}, incomingSessionId=${incomingSessionId}, ragSessionId=${ragSessionId}`);
+
+      if (callId && incomingSessionId) {
+        setRagSession(callId, incomingSessionId);
+        console.log(`🔗 Mapped call ${callId} -> RAG session ${incomingSessionId}`);
       }
 
       if (!userMessage) {
