@@ -60,6 +60,7 @@ type Intent = "error" | "audit" | "navigate" | "explain" | "debug";
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const MAX_SESSION_MESSAGES = 10;
 const sessions = new Map<string, Session>();
+const callToRagSession = new Map<string, string>();
 
 const DEBUG_FOLLOW_UPS = [
   "Can you tell me when this started happening?",
@@ -115,6 +116,14 @@ function getConversationSession(callId: string): Session {
   const created: Session = { messages: [], lastActive: Date.now() };
   sessions.set(callId, created);
   return created;
+}
+
+function setRagSession(callId: string, ragSessionId: string): void {
+  callToRagSession.set(callId, ragSessionId);
+}
+
+function getRagSession(callId: string): string | undefined {
+  return callToRagSession.get(callId);
 }
 
 function parseGithubRepo(
@@ -566,10 +575,14 @@ const handleLlmRequest = async (req: Request, res: Response) => {
     const incomingSessionId = req.body?.call?.metadata?.sessionId as
       | string
       | undefined;
+    const mappedSessionId = getRagSession(callId);
     const ragSessionId = isIngestionSessionReady(incomingSessionId)
       ? incomingSessionId
+      : isIngestionSessionReady(mappedSessionId)
+      ? mappedSessionId
       : undefined;
 
+    console.log(`🔍 /llm callId=${callId} incomingSessionId=${incomingSessionId} mappedSessionId=${mappedSessionId} ragSessionId=${ragSessionId}`);
     console.log(`🎯 Intent: ${intent}`);
     console.log(`🔑 Session: ${ragSessionId ?? "global"}`);
     console.log(
@@ -785,6 +798,7 @@ Start with "In this session,"`,
       }
 
       sessions.delete(callId);
+      callToRagSession.delete(callId);
       return res.json({ response: "ok" });
     }
 
@@ -792,6 +806,11 @@ Start with "In this session,"`,
       const userMessage = String(body?.message?.content || body?.message?.transcript || "").trim();
       const incomingSessionId = body?.call?.metadata?.sessionId as string | undefined;
       const ragSessionId = isIngestionSessionReady(incomingSessionId) ? incomingSessionId : undefined;
+
+      if (callId && incomingSessionId) {
+        setRagSession(callId, incomingSessionId);
+        console.log(`🔗 Mapped callId=${callId} -> sessionId=${incomingSessionId}`);
+      }
 
       if (!userMessage) {
         return res.json({ response: "I didn't catch that. Can you repeat?" });
