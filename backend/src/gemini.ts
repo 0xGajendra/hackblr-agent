@@ -41,7 +41,7 @@ export async function chat(
   console.log(`🤖 Calling Groq...`);
   try {
     const response = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+      model: "llama-3.1-8b-instant",
       messages: [{ role: "system", content: systemPrompt }, ...messages],
       max_tokens: maxTokens,
     });

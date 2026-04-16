@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 
 type Intent = "error" | "audit" | "debug" | "explain" | "navigate";
 type Role = "user" | "assistant";
@@ -127,6 +128,7 @@ export default function HomePage() {
   const [sessionChunkCount, setSessionChunkCount] = useState<number | null>(
     null,
   );
+  const [theme, setTheme] = useState<"light" | "dark">("light");
 
   const vapiRef = useRef<any>(null);
   const backendUrl =
@@ -211,6 +213,13 @@ export default function HomePage() {
       cancelled = true;
     };
   }, [backendUrl, sessionId, ingestStatus]);
+
+  function toggleTheme() {
+    const next = theme === "light" ? "dark" : "light";
+    setTheme(next);
+    localStorage.setItem("theme", next);
+    document.documentElement.setAttribute("data-theme", next);
+  }
 
   async function ingestPaste() {
     try {
@@ -457,9 +466,17 @@ export default function HomePage() {
   return (
     <main className="page">
       <header className="header">
-        <div>
+        <div className="header-left">
           <h1>HackBLR</h1>
           <p className="subtitle">Voice-first developer assistant</p>
+        </div>
+        <div className="header-right">
+          <Link href="/docs" className="nav-link">
+            Docs
+          </Link>
+          <button className="theme-toggle" onClick={toggleTheme}>
+            {theme === "dark" ? "☀️" : "🌙"}
+          </button>
         </div>
       </header>
 
