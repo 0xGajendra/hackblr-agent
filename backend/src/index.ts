@@ -735,17 +735,36 @@ const handleLlmRequest = async (req: Request, res: Response) => {
     console.log(`⏱️ /llm latency: ${Date.now() - startedAt}ms`);
     console.log(`📤 Sending response:`, JSON.stringify({ choices: [{ message: { content: answer } }] }).slice(0, 200));
 
-    res.json({
-      id: "chatcmpl-hackblr",
-      object: "chat.completion",
-      choices: [
-        {
-          index: 0,
-          message: { role: "assistant", content: answer },
-          finish_reason: "stop",
-        },
-      ],
-    });
+    const stream = req.body?.stream === true;
+    
+    if (stream) {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+
+      const chunks = answer.split(" ");
+      for (let i = 0; i < chunks.length; i++) {
+        const delta = chunks[i] + (i < chunks.length - 1 ? " " : "");
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: delta } }] })}\n\n`);
+      }
+
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "" }, finish_reason: "stop" }] })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+    } else {
+      res.json({
+        id: "chatcmpl-hackblr",
+        object: "chat.completion",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: answer },
+            finish_reason: "stop",
+          },
+        ],
+      });
+    }
   } catch (err) {
     console.error("❌ Error in /llm:", err);
     res.json({
