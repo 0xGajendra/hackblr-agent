@@ -120,10 +120,13 @@ function getConversationSession(callId: string): Session {
 
 function setRagSession(callId: string, ragSessionId: string): void {
   callToRagSession.set(callId, ragSessionId);
+  console.log(`💾 Stored mapping: callId=${callId} -> sessionId=${ragSessionId}, total mappings=${callToRagSession.size}`);
 }
 
 function getRagSession(callId: string): string | undefined {
-  return callToRagSession.get(callId);
+  const mapped = callToRagSession.get(callId);
+  console.log(`🔍 getRagSession(${callId}) = ${mapped}, all callIds: ${JSON.stringify([...callToRagSession.keys()])}`);
+  return mapped;
 }
 
 function parseGithubRepo(
@@ -806,6 +809,8 @@ Start with "In this session,"`,
       const userMessage = String(body?.message?.content || body?.message?.transcript || "").trim();
       const incomingSessionId = body?.call?.metadata?.sessionId as string | undefined;
       const ragSessionId = isIngestionSessionReady(incomingSessionId) ? incomingSessionId : undefined;
+
+      console.log(`🔍 Webhook: callId=${callId} incomingSessionId=${incomingSessionId} ragSessionId=${ragSessionId}`);
 
       if (callId && incomingSessionId) {
         setRagSession(callId, incomingSessionId);
