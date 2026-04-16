@@ -635,7 +635,7 @@ const handleLlmRequest = async (req: Request, res: Response) => {
     const promptWithContext =
       intent === "audit"
         ? `${AUDIT_PROMPT}\n\nCodebase context:\n${context}`
-        : `Context:\n${context}\n\nQuestion: ${userMessage}`;
+        : `IMPORTANT: Only answer based on the EXACT code below. If the question cannot be answered from this code, say "I don't see that in the provided code." Do not guess or infer.\n\nCodebase context:\n${context}\n\nQuestion: ${userMessage}`;
 
     const llmMessages: Message[] = [
       ...session.messages,
@@ -831,7 +831,7 @@ Start with "In this session,"`,
         ...session.messages,
         { role: "user", content: promptWithContext },
       ];
-      const maxTokens = intent === "audit" ? 300 : intent === "debug" ? 120 : 150;
+const maxTokens = intent === "audit" ? 300 : intent === "debug" ? 120 : intent === "explain" ? 200 : 150;
 
       let answer = "";
       try {
