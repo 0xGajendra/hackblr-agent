@@ -547,8 +547,9 @@ app.get("/", (_req: Request, res: Response) => {
   res.json({ status: "ok", message: "HackBLR Dev Agent running 🚀" });
 });
 
-app.post("/llm", async (req: Request, res: Response) => {
+const handleLlmRequest = async (req: Request, res: Response) => {
   try {
+    console.log("🔥 /llm request received:", JSON.stringify(req.body).slice(0, 200));
     const startedAt = Date.now();
     cleanupExpiredSessions();
 
@@ -732,6 +733,7 @@ app.post("/llm", async (req: Request, res: Response) => {
 
     console.log(`🤖 Response: ${answer}\n`);
     console.log(`⏱️ /llm latency: ${Date.now() - startedAt}ms`);
+    console.log(`📤 Sending response:`, JSON.stringify({ choices: [{ message: { content: answer } }] }).slice(0, 200));
 
     res.json({
       id: "chatcmpl-hackblr",
@@ -745,7 +747,7 @@ app.post("/llm", async (req: Request, res: Response) => {
       ],
     });
   } catch (err) {
-    console.error("❌ Error:", err);
+    console.error("❌ Error in /llm:", err);
     res.json({
       id: "chatcmpl-error",
       object: "chat.completion",
@@ -761,7 +763,14 @@ app.post("/llm", async (req: Request, res: Response) => {
       ],
     });
   }
-});
+};
+
+app.post("/llm", handleLlmRequest);
+app.post("/llm/chat/completions", handleLlmRequest);
+app.post("/chat/completions", handleLlmRequest);
+
+// Also handle Vapi's expected format for custom LLM
+app.post("/v1/chat/completions", handleLlmRequest);
 
 // Vapi webhook
 app.post("/vapi-webhook", async (req: Request, res: Response) => {
@@ -774,7 +783,7 @@ app.post("/vapi-webhook", async (req: Request, res: Response) => {
       cleanupExpiredSessions();
       const session = sessions.get(callId);
       if (!session) {
-        return res.json({ result: "ok" });
+        return res.json({ response: "ok" });
       }
 
       let summary =
@@ -804,12 +813,89 @@ Start with "In this session,"`,
       }
 
       sessions.delete(callId);
+      return res.json({ response: "ok" });
     }
 
-    res.json({ result: "ok" });
+    if (eventType === "conversation-update" || eventType === "transcript") {
+      const userMessage = String(body?.message?.content || body?.message?.transcript || "").trim();
+      const incomingSessionId = body?.call?.metadata?.sessionId as string | undefined;
+      const ragSessionId = isIngestionSessionReady(incomingSessionId) ? incomingSessionId : undefined;
+
+      if (!userMessage) {
+        return res.json({ response: "I didn't catch that. Can you repeat?" });
+      }
+
+      console.log(`\n🎤 Vapi User said: "${userMessage}"`);
+
+      const intent = detectIntent(userMessage);
+      console.log(`🎯 Intent: ${intent}`);
+
+      let context = "No specific codebase context found.";
+      let searchResultsCount = 0;
+      let intentInstruction = INTENT_PROMPT_ADDONS[intent];
+
+      try {
+        const basic = await withTimeout(
+          basicRagResponse(userMessage, ragSessionId),
+          4500,
+          "basicRagResponse",
+        );
+        context = basic.context;
+        searchResultsCount = basic.resultsCount;
+      } catch (featureErr) {
+        console.error("⚠️ RAG fallback:", featureErr);
+        context = "No specific codebase context found.";
+        searchResultsCount = 0;
+      }
+
+      console.log(`📚 Found ${searchResultsCount} relevant chunk(s)`);
+
+      const dynamicSystemPrompt = `${SYSTEM_PROMPT}\n\n${intentInstruction}`;
+      const promptWithContext = `Context:\n${context}\n\nQuestion: ${userMessage}`;
+
+      const session = getConversationSession(callId);
+      const llmMessages: Message[] = [
+        ...session.messages,
+        { role: "user", content: promptWithContext },
+      ];
+      const maxTokens = intent === "audit" ? 300 : intent === "debug" ? 120 : 150;
+
+      let answer = "";
+      try {
+        answer = await withTimeout(
+          chat(dynamicSystemPrompt, llmMessages, maxTokens),
+          6000,
+          "chat",
+        );
+      } catch (chatErr) {
+        console.error("⚠️ Chat failed:", chatErr);
+        answer = fallbackAssistantMessage(userMessage);
+      }
+
+      if (!answer || !answer.trim()) {
+        answer = fallbackAssistantMessage(userMessage);
+      }
+
+      const updatedHistory = trimHistory([
+        ...session.messages,
+        { role: "user", content: userMessage },
+        { role: "assistant", content: answer },
+      ]);
+
+      sessions.set(callId, {
+        messages: updatedHistory,
+        lastActive: Date.now(),
+      });
+
+      console.log(`🤖 Vapi Response: ${answer}\n`);
+
+      return res.json({ response: answer });
+    }
+
+    return res.json({ response: "ok" });
   } catch (err) {
-    console.error("❌ Error:", err);
-    res.json({ result: "ok" });
+    console.error("❌ Vapi webhook error:", err);
+    res.json({ response: "Something went wrong, try again." });
   }
 });
 
