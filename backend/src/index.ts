@@ -73,7 +73,8 @@ Your responses will be spoken aloud via text-to-speech, so:
 - Keep answers concise and conversational (2-4 sentences max)
 - No markdown, no bullet points, no code blocks
 - Speak like a senior dev helping a teammate
-- If you found relevant code context, reference it naturally`;
+- Only describe what you actually found in the provided code context - NEVER make up file names, functions, or implementation details that aren't in the context
+- If the context doesn't contain enough information to answer a question, say "I don't see that in the provided code" rather than guessing`;
 
 const INTENT_PROMPT_ADDONS: Record<Intent, string> = {
   error:
@@ -83,7 +84,7 @@ const INTENT_PROMPT_ADDONS: Record<Intent, string> = {
   navigate:
     "Help the developer find where something lives in the codebase. Reference exact file names from context.",
   explain:
-    "Explain clearly how this works. Reference the actual code from context.",
+    "When explaining HOW the code was built: describe the actual code structure, functions, and logic you found in the context. Be specific - mention actual file names, function names, and how they work together. Don't make up details that aren't in the provided code.",
   debug:
     "You are pair debugging. Ask targeted questions to narrow down the issue. Reference relevant code from context.",
 };
