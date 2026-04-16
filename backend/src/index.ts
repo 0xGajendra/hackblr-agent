@@ -562,7 +562,7 @@ app.get("/", (_req: Request, res: Response) => {
 // Debug endpoint to check Qdrant chunks for a session
 app.get("/debug/chunks/:sessionId", async (_req: Request, res: Response) => {
   try {
-    const { sessionId } = _req.params;
+    const sessionId = String(_req.params.sessionId || "");
     const results = await scrollBySession(sessionId, 100);
     return res.json({ 
       sessionId, 
