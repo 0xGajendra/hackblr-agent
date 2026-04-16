@@ -583,95 +583,48 @@ const handleLlmRequest = async (req: Request, res: Response) => {
     let intentInstruction = INTENT_PROMPT_ADDONS[intent];
 
     try {
-      if (intent === "audit") {
-        const points = ragSessionId
-          ? await scrollBySession(ragSessionId, 50)
-          : (
-              await qdrant.scroll(COLLECTION, {
-                limit: 50,
-                with_payload: true,
-                with_vector: false,
-              })
-            ).points || [];
-
+      if (!ragSessionId) {
+        console.log("⚠️ No RAG session - skipping context");
+        context = "No codebase context available.";
+        searchResultsCount = 0;
+      } else if (intent === "audit") {
+        const points = await scrollBySession(ragSessionId, 50);
         context = formatContextFromResults(points);
         searchResultsCount = points.length;
         console.log(`📊 Audit mode: fetched ${points.length} chunks`);
       } else if (intent === "error") {
         const keywords = extractErrorKeywords(userMessage);
         console.log(`🐛 Error interpreter: extracted keywords "${keywords}"`);
-
         const [standardVector, keywordVector] = await Promise.all([
           embedForQuery(userMessage),
-          keywords
-            ? embedForQuery(keywords)
-            : Promise.resolve<number[] | null>(null),
+          keywords ? embedForQuery(keywords) : Promise.resolve<number[] | null>(null),
         ]);
-
         const [standardResults, keywordResults] = await Promise.all([
-          ragSessionId
-            ? searchBySession(ragSessionId, standardVector, 3, 0.5)
-            : qdrant.search(COLLECTION, {
-                vector: standardVector,
-                limit: 3,
-                score_threshold: 0.5,
-              }),
-          keywordVector
-            ? ragSessionId
-              ? searchBySession(ragSessionId, keywordVector, 2, 0.3)
-              : qdrant.search(COLLECTION, {
-                  vector: keywordVector,
-                  limit: 2,
-                  score_threshold: 0.3,
-                })
-            : Promise.resolve([]),
+          searchBySession(ragSessionId, standardVector, 3, 0.5),
+          keywordVector ? searchBySession(ragSessionId, keywordVector, 2, 0.3) : Promise.resolve([]),
         ]);
-
         const seen = new Set<string>();
-        const mergedResults = [...standardResults, ...keywordResults].filter(
-          (item) => {
-            const text = ((item.payload || {}) as ChunkPayload).text || "";
-            if (seen.has(text)) return false;
-            seen.add(text);
-            return true;
-          },
-        );
-
+        const mergedResults = [...standardResults, ...keywordResults].filter((item) => {
+          const text = ((item.payload || {}) as ChunkPayload).text || "";
+          if (seen.has(text)) return false;
+          seen.add(text);
+          return true;
+        });
         searchResultsCount = mergedResults.length;
         context = formatContextFromResults(mergedResults);
-
-        const firstFile = ((mergedResults[0]?.payload || {}) as ChunkPayload)
-          .file;
-        const fileHint = firstFile
-          ? ` The error appears to originate in ${firstFile}.`
-          : "";
-        intentInstruction +=
-          " Identify which file and function this error likely originates from based on the context provided." +
-          fileHint;
+        const firstFile = ((mergedResults[0]?.payload || {}) as ChunkPayload).file;
+        if (firstFile) {
+          intentInstruction += ` The error appears to originate in ${firstFile}.`;
+        }
       } else {
-        const basic = await withTimeout(
-          basicRagResponse(userMessage, ragSessionId),
-          4500,
-          "basicRagResponse",
-        );
+        const basic = await withTimeout(basicRagResponse(userMessage, ragSessionId), 4500, "basicRagResponse");
         context = basic.context;
         searchResultsCount = basic.resultsCount;
       }
     } catch (featureErr) {
-      console.error("⚠️ Feature fallback to basic RAG:", featureErr);
-      try {
-        const fallback = await withTimeout(
-          basicRagResponse(userMessage, ragSessionId),
-          3500,
-          "fallback basicRagResponse",
-        );
-        context = fallback.context;
-        searchResultsCount = fallback.resultsCount;
-      } catch (fallbackErr) {
-        console.error("⚠️ Basic RAG fallback failed:", fallbackErr);
-        context = "No specific codebase context found.";
-        searchResultsCount = 0;
-      }
+      console.error("⚠️ RAG error:", featureErr);
+      context = "No codebase context available.";
+      searchResultsCount = 0;
     }
 
     console.log(`📚 Found ${searchResultsCount} relevant chunk(s)`);
