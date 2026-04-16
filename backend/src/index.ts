@@ -559,9 +559,28 @@ app.get("/", (_req: Request, res: Response) => {
   res.json({ status: "ok", message: "HackBLR Dev Agent running 🚀" });
 });
 
+// Debug endpoint to check Qdrant chunks for a session
+app.get("/debug/chunks/:sessionId", async (_req: Request, res: Response) => {
+  try {
+    const { sessionId } = _req.params;
+    const results = await scrollBySession(sessionId, 100);
+    return res.json({ 
+      sessionId, 
+      chunkCount: results.length,
+      chunks: results.map(r => ({ 
+        file: r.payload?.file, 
+        text: r.payload?.text?.slice(0, 100) 
+      }))
+    });
+  } catch (err) {
+    return res.status(500).json({ error: "Failed to fetch chunks" });
+  }
+});
+
 const handleLlmRequest = async (req: Request, res: Response) => {
   try {
-    console.log("🔥 /llm request received:", JSON.stringify(req.body).slice(0, 200));
+    const rawBody = JSON.stringify(req.body);
+    console.log("🔥 /llm raw body:", rawBody.slice(0, 800));
     const startedAt = Date.now();
     cleanupExpiredSessions();
 
@@ -572,7 +591,7 @@ const handleLlmRequest = async (req: Request, res: Response) => {
     const userMessage =
       [...requestMessages].reverse().find((m) => m.role === "user")?.content ||
       "";
-    const callId = String(req.body?.call?.id || "default-session");
+    const callId = String(req.body?.call?.id || req.body?.callId || req.body?.id || "default-session");
     const session = getConversationSession(callId);
     const intent = detectIntent(userMessage);
     const incomingSessionId = req.body?.call?.metadata?.sessionId as
@@ -764,8 +783,10 @@ app.post("/v1/chat/completions", handleLlmRequest);
 app.post("/vapi-webhook", async (req: Request, res: Response) => {
   try {
     const body = req.body;
+    console.log("🔥 Webhook body:", JSON.stringify(body).slice(0, 500));
     const eventType = body?.message?.type || body?.type;
-    const callId = String(body?.call?.id || "");
+    const callId = String(body?.call?.id || body?.callId || body?.id || "");
+    const sessionIdFromMeta = body?.call?.metadata?.sessionId || body?.metadata?.sessionId || "";
 
     if (eventType === "end-of-call-report" && callId) {
       cleanupExpiredSessions();
