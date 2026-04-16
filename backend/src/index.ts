@@ -59,6 +59,7 @@ type Intent = "error" | "audit" | "navigate" | "explain" | "debug";
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const MAX_SESSION_MESSAGES = 10;
+const DEFAULT_RAG_SESSION = "global-default"; // Single session for all Vapi calls
 const sessions = new Map<string, Session>();
 const callToRagSession = new Map<string, string>();
 
@@ -598,11 +599,16 @@ const handleLlmRequest = async (req: Request, res: Response) => {
       | string
       | undefined;
     const mappedSessionId = getRagSession(callId);
-    const ragSessionId = isIngestionSessionReady(incomingSessionId)
+    let ragSessionId = isIngestionSessionReady(incomingSessionId)
       ? incomingSessionId
       : isIngestionSessionReady(mappedSessionId)
       ? mappedSessionId
       : undefined;
+    
+    // Fallback to default session
+    if (!ragSessionId) {
+      ragSessionId = DEFAULT_RAG_SESSION;
+    }
 
     console.log(`🔍 /llm callId=${callId} incomingSessionId=${incomingSessionId} mappedSessionId=${mappedSessionId} ragSessionId=${ragSessionId}`);
     console.log(`🎯 Intent: ${intent}`);
@@ -786,7 +792,8 @@ app.post("/vapi-webhook", async (req: Request, res: Response) => {
     console.log("🔥 Webhook body:", JSON.stringify(body).slice(0, 500));
     const eventType = body?.message?.type || body?.type;
     const callId = String(body?.call?.id || body?.callId || body?.id || "");
-    const sessionIdFromMeta = body?.call?.metadata?.sessionId || body?.metadata?.sessionId || "";
+    const sessionIdFromQuery = String(req.query.sessionId || "");
+    const sessionIdFromMeta = body?.call?.metadata?.sessionId || body?.metadata?.sessionId || sessionIdFromQuery;
 
     if (eventType === "end-of-call-report" && callId) {
       cleanupExpiredSessions();
@@ -829,7 +836,13 @@ Start with "In this session,"`,
     if (eventType === "conversation-update" || eventType === "transcript") {
       const userMessage = String(body?.message?.content || body?.message?.transcript || "").trim();
       const incomingSessionId = body?.call?.metadata?.sessionId as string | undefined;
-      const ragSessionId = isIngestionSessionReady(incomingSessionId) ? incomingSessionId : undefined;
+      let ragSessionId = isIngestionSessionReady(incomingSessionId) ? incomingSessionId : undefined;
+      
+      // Fallback to default session for all Vapi calls
+      if (!ragSessionId) {
+        ragSessionId = DEFAULT_RAG_SESSION;
+        console.log(`🔍 Using default session for Vapi call: ${DEFAULT_RAG_SESSION}`);
+      }
 
       console.log(`🔍 Webhook: callId=${callId} incomingSessionId=${incomingSessionId} ragSessionId=${ragSessionId}`);
 
