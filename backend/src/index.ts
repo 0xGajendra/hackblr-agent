@@ -121,13 +121,10 @@ function getConversationSession(callId: string): Session {
 
 function setRagSession(callId: string, ragSessionId: string): void {
   callToRagSession.set(callId, ragSessionId);
-  console.log(`💾 Stored mapping: callId=${callId} -> sessionId=${ragSessionId}, total mappings=${callToRagSession.size}`);
 }
 
 function getRagSession(callId: string): string | undefined {
-  const mapped = callToRagSession.get(callId);
-  console.log(`🔍 getRagSession(${callId}) = ${mapped}, all callIds: ${JSON.stringify([...callToRagSession.keys()])}`);
-  return mapped;
+  return callToRagSession.get(callId);
 }
 
 function parseGithubRepo(
@@ -287,10 +284,6 @@ app.post("/ingest/paste", async (req: Request, res: Response) => {
     const totalChunks = (meta?.chunkCount || 0) + chunks;
     markReady(sessionId, totalChunks);
 
-    console.log(
-      `🎉 Session ${sessionId} ready: ${totalChunks} total chunks from 1 files`,
-    );
-
     return res.json({
       sessionId,
       filename,
@@ -298,7 +291,7 @@ app.post("/ingest/paste", async (req: Request, res: Response) => {
       ready: true,
     });
   } catch (err) {
-    console.error("❌ /ingest/paste failed:", err);
+    console.error("/ingest/paste failed:", err);
     return res.status(500).json({ error: "Failed to ingest pasted code" });
   }
 });
@@ -355,9 +348,6 @@ app.post("/ingest/upload", async (req: Request, res: Response) => {
     }
 
     markReady(sessionId, totalChunks);
-    console.log(
-      `🎉 Session ${sessionId} ready: ${totalChunks} total chunks from ${filesIngested} files`,
-    );
 
     return res.json({
       sessionId,
@@ -366,7 +356,7 @@ app.post("/ingest/upload", async (req: Request, res: Response) => {
       ready: true,
     });
   } catch (err) {
-    console.error("❌ /ingest/upload failed:", err);
+    console.error("/ingest/upload failed:", err);
     return res.status(500).json({ error: "Failed to ingest uploaded files" });
   }
 });
@@ -392,9 +382,6 @@ app.post("/ingest/github", async (req: Request, res: Response) => {
     let treeData: GithubTreeResponse | null = null;
 
     for (const branch of branches) {
-      console.log(
-        `🐙 Fetching GitHub repo: ${owner}/${repo} branch: ${branch}`,
-      );
       const treeRes = await fetch(
         `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
         {
@@ -460,15 +447,12 @@ app.post("/ingest/github", async (req: Request, res: Response) => {
       .filter((entry) => (entry.size || 0) <= 100 * 1024)
       .slice(0, 30);
 
-    console.log(`📁 Found ${files.length} files to ingest`);
-
     const sessionId = createIngestionSession("github", repoUrl);
     let totalChunks = 0;
     let filesIngested = 0;
 
     for (let i = 0; i < files.length; i += 1) {
       const file = files[i];
-      console.log(`📥 [${i + 1}/${files.length}] Ingesting ${file.path}...`);
 
       try {
         const rawRes = await fetch(
@@ -498,14 +482,11 @@ app.post("/ingest/github", async (req: Request, res: Response) => {
         totalChunks += chunks;
         filesIngested += 1;
       } catch (fileErr) {
-        console.error(`⚠️ Failed to ingest ${file.path}:`, fileErr);
+        console.error(`Failed to ingest ${file.path}:`, fileErr);
       }
     }
 
     markReady(sessionId, totalChunks);
-    console.log(
-      `🎉 Session ${sessionId} ready: ${totalChunks} total chunks from ${filesIngested} files`,
-    );
 
     return res.json({
       sessionId,
@@ -515,7 +496,7 @@ app.post("/ingest/github", async (req: Request, res: Response) => {
       ready: true,
     });
   } catch (err) {
-    console.error("❌ /ingest/github failed:", err);
+    console.error("/ingest/github failed:", err);
     return res
       .status(500)
       .json({ error: "Failed to ingest GitHub repository" });
@@ -580,8 +561,6 @@ app.get("/debug/chunks/:sessionId", async (_req: Request, res: Response) => {
 
 const handleLlmRequest = async (req: Request, res: Response) => {
   try {
-    const rawBody = JSON.stringify(req.body);
-    console.log("🔥 /llm raw body:", rawBody.slice(0, 800));
     const startedAt = Date.now();
     cleanupExpiredSessions();
 
@@ -610,32 +589,17 @@ const handleLlmRequest = async (req: Request, res: Response) => {
       ragSessionId = DEFAULT_RAG_SESSION;
     }
 
-    console.log(`🔍 /llm callId=${callId} incomingSessionId=${incomingSessionId} mappedSessionId=${mappedSessionId} ragSessionId=${ragSessionId}`);
-    console.log(`🎯 Intent: ${intent}`);
-    console.log(`🔑 Session: ${ragSessionId ?? "global"}`);
-    console.log(
-      `🧠 Session: ${callId} — ${session.messages.length} messages in history`,
-    );
-
-    console.log(`\n🎤 User said: "${userMessage}"`);
-
     let context = "No specific codebase context found.";
     let searchResultsCount = 0;
     let intentInstruction = INTENT_PROMPT_ADDONS[intent];
 
     try {
-      if (!ragSessionId) {
-        console.log("⚠️ No RAG session - skipping context");
-        context = "No codebase context available.";
-        searchResultsCount = 0;
-      } else if (intent === "audit") {
+      if (intent === "audit") {
         const points = await scrollBySession(ragSessionId, 50);
         context = formatContextFromResults(points);
         searchResultsCount = points.length;
-        console.log(`📊 Audit mode: fetched ${points.length} chunks`);
       } else if (intent === "error") {
         const keywords = extractErrorKeywords(userMessage);
-        console.log(`🐛 Error interpreter: extracted keywords "${keywords}"`);
         const [standardVector, keywordVector] = await Promise.all([
           embedForQuery(userMessage),
           keywords ? embedForQuery(keywords) : Promise.resolve<number[] | null>(null),
@@ -663,12 +627,10 @@ const handleLlmRequest = async (req: Request, res: Response) => {
         searchResultsCount = basic.resultsCount;
       }
     } catch (featureErr) {
-      console.error("⚠️ RAG error:", featureErr);
+      console.error("RAG error:", featureErr);
       context = "No codebase context available.";
       searchResultsCount = 0;
     }
-
-    console.log(`📚 Found ${searchResultsCount} relevant chunk(s)`);
 
     const dynamicSystemPrompt = `${SYSTEM_PROMPT}\n\n${intentInstruction}`;
 
@@ -708,9 +670,8 @@ const handleLlmRequest = async (req: Request, res: Response) => {
         const followUp =
           DEBUG_FOLLOW_UPS[Math.floor(Math.random() * DEBUG_FOLLOW_UPS.length)];
         answer = `${answer} Also — ${followUp}`;
-        console.log("🔁 Multi-turn: appending follow-up question");
       } catch (followErr) {
-        console.error("⚠️ Multi-turn follow-up failed:", followErr);
+        console.error("Multi-turn follow-up failed:", followErr);
       }
     }
 
@@ -724,10 +685,6 @@ const handleLlmRequest = async (req: Request, res: Response) => {
       messages: updatedHistory,
       lastActive: Date.now(),
     });
-
-    console.log(`🤖 Response: ${answer}\n`);
-    console.log(`⏱️ /llm latency: ${Date.now() - startedAt}ms`);
-    console.log(`📤 Sending response:`, JSON.stringify({ choices: [{ message: { content: answer } }] }).slice(0, 200));
 
     const stream = req.body?.stream === true;
     
@@ -789,7 +746,6 @@ app.post("/v1/chat/completions", handleLlmRequest);
 app.post("/vapi-webhook", async (req: Request, res: Response) => {
   try {
     const body = req.body;
-    console.log("🔥 Webhook body:", JSON.stringify(body).slice(0, 500));
     const eventType = body?.message?.type || body?.type;
     const callId = String(body?.call?.id || body?.callId || body?.id || "");
     const sessionIdFromQuery = String(req.query.sessionId || "");
@@ -814,18 +770,15 @@ Start with "In this session,"`,
           100,
         );
       } catch (summaryErr) {
-        console.error("⚠️ Session summary generation failed:", summaryErr);
+        console.error("Session summary generation failed:", summaryErr);
       }
-
-      console.log(`📝 Session Summary: ${summary}`);
 
       try {
         const logPath = path.resolve(process.cwd(), "sessions.log");
         const line = `${new Date().toISOString()} | ${callId} | ${summary}\n`;
         await fs.promises.appendFile(logPath, line, "utf8");
-        console.log("📝 Session summary saved");
       } catch (fileErr) {
-        console.error("⚠️ Failed to write session summary:", fileErr);
+        console.error("Failed to write session summary:", fileErr);
       }
 
       sessions.delete(callId);
@@ -841,24 +794,17 @@ Start with "In this session,"`,
       // Fallback to default session for all Vapi calls
       if (!ragSessionId) {
         ragSessionId = DEFAULT_RAG_SESSION;
-        console.log(`🔍 Using default session for Vapi call: ${DEFAULT_RAG_SESSION}`);
       }
-
-      console.log(`🔍 Webhook: callId=${callId} incomingSessionId=${incomingSessionId} ragSessionId=${ragSessionId}`);
 
       if (callId && incomingSessionId) {
         setRagSession(callId, incomingSessionId);
-        console.log(`🔗 Mapped callId=${callId} -> sessionId=${incomingSessionId}`);
       }
 
       if (!userMessage) {
         return res.json({ response: "I didn't catch that. Can you repeat?" });
       }
 
-      console.log(`\n🎤 Vapi User said: "${userMessage}"`);
-
       const intent = detectIntent(userMessage);
-      console.log(`🎯 Intent: ${intent}`);
 
       let context = "No specific codebase context found.";
       let searchResultsCount = 0;
@@ -873,12 +819,10 @@ Start with "In this session,"`,
         context = basic.context;
         searchResultsCount = basic.resultsCount;
       } catch (featureErr) {
-        console.error("⚠️ RAG fallback:", featureErr);
+        console.error("RAG fallback:", featureErr);
         context = "No specific codebase context found.";
         searchResultsCount = 0;
       }
-
-      console.log(`📚 Found ${searchResultsCount} relevant chunk(s)`);
 
       const dynamicSystemPrompt = `${SYSTEM_PROMPT}\n\n${intentInstruction}`;
       const promptWithContext = `Context:\n${context}\n\nQuestion: ${userMessage}`;
@@ -898,7 +842,7 @@ Start with "In this session,"`,
           "chat",
         );
       } catch (chatErr) {
-        console.error("⚠️ Chat failed:", chatErr);
+        console.error("Chat failed:", chatErr);
         answer = fallbackAssistantMessage(userMessage);
       }
 
@@ -917,14 +861,12 @@ Start with "In this session,"`,
         lastActive: Date.now(),
       });
 
-      console.log(`🤖 Vapi Response: ${answer}\n`);
-
       return res.json({ response: answer });
     }
 
     return res.json({ response: "ok" });
   } catch (err) {
-    console.error("❌ Vapi webhook error:", err);
+    console.error("Vapi webhook error:", err);
     res.json({ response: "Something went wrong, try again." });
   }
 });
@@ -934,14 +876,14 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
   try {
     await ensureCollection();
-    console.log("✅ Qdrant connection ready");
+    console.log("Qdrant connection ready");
   } catch (err) {
     console.error(
-      "⚠️ Qdrant unavailable at startup. Running in degraded mode without vector search.",
+      "Qdrant unavailable at startup. Running in degraded mode without vector search.",
       err,
     );
   }
-  console.log(`\n🚀 Server running at http://localhost:${PORT}`);
-  console.log(`📡 Vapi webhook: http://localhost:${PORT}/vapi-webhook`);
-  console.log(`💡 Run ngrok: npx ngrok http ${PORT}\n`);
+  console.log(`Server running at http://localhost:${PORT}`);
+  console.log(`Vapi webhook: http://localhost:${PORT}/vapi-webhook`);
+  console.log(`Run ngrok: npx ngrok http ${PORT}`);
 });

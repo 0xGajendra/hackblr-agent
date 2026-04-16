@@ -30,8 +30,6 @@ export async function ingestChunks(
   content: string,
   filename: string,
 ): Promise<number> {
-  console.log(`📥 Ingesting ${filename} for session ${sessionId}...`);
-
   const chunks = chunkWithOverlap(content);
 
   for (const chunk of chunks) {
@@ -40,6 +38,5 @@ export async function ingestChunks(
     await sleep(100);
   }
 
-  console.log(`✅ ${filename}: ${chunks.length} chunks embedded`);
   return chunks.length;
 }

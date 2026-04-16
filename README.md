@@ -1,4 +1,4 @@
-# HackBLR 🎤
+# Code Yapper 🎤
 
 Voice-first developer assistant that lets you talk to your codebase. Ask about errors, audit code, or explain how anything works through a voice conversation.
 

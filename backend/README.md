@@ -1,4 +1,4 @@
-# HackBLR Backend 🎤
+# Code Yapper Backend 🎤
 
 Voice-native developer experience agent built with Vapi + Groq + Gemini + Qdrant.
 

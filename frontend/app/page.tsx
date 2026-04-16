@@ -286,6 +286,7 @@ export default function HomePage() {
 
     try {
       setLoading(true);
+      setIngestStatus(`Loading ${selected.label}...`);
       const res = await fetch(`${backendUrl}/ingest/paste`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -301,13 +302,20 @@ export default function HomePage() {
         return;
       }
       setSessionId(data.sessionId);
-      setIngestStatus(`Demo loaded: ${selected.label} (${data.chunks} chunks)`);
+      setIngestStatus(`Ready: ${selected.label} (${data.chunks} chunks)`);
     } catch (error) {
       console.error(error);
       setIngestStatus("Demo ingestion failed");
     } finally {
       setLoading(false);
     }
+  }
+
+  function previewDemo(index: number) {
+    const selected = DEMO_CODEBASES[index];
+    setCode(selected.code);
+    setFilename(selected.filename);
+    setIngestStatus(`Preview: ${selected.label} - Click "Ingest Code" to load`);
   }
 
   async function ingestUpload() {
@@ -467,7 +475,7 @@ export default function HomePage() {
     <main className="page">
       <header className="header">
         <div className="header-left">
-          <h1>HackBLR</h1>
+          <h1>Code Yapper</h1>
           <p className="subtitle">Voice-first developer assistant</p>
         </div>
         <div className="header-right">

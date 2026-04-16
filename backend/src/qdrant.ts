@@ -34,7 +34,6 @@ async function ensureSessionIdIndex() {
       field_name: "sessionId",
       field_schema: "keyword",
     });
-    console.log("✅ Ensured Qdrant payload index: sessionId");
   } catch (err) {
     const msg = getQdrantErrorMessage(err);
     if (/already exists|is already indexed|same name/i.test(msg)) {
@@ -52,7 +51,6 @@ export async function ensureCollection() {
     await qdrant.createCollection(COLLECTION, {
       vectors: { size: VECTOR_SIZE, distance: "Cosine" },
     });
-    console.log(`✅ Created Qdrant collection: ${COLLECTION}`);
   }
 
   await ensureSessionIdIndex();

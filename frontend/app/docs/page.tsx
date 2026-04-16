@@ -23,7 +23,7 @@ export default function DocsPage() {
       <header className="header">
         <div className="header-left">
           <Link href="/" style={{ textDecoration: "none" }}>
-            <h1>HackBLR</h1>
+            <h1>Code Yapper</h1>
           </Link>
           <p className="subtitle">Documentation</p>
         </div>
@@ -40,7 +40,7 @@ export default function DocsPage() {
       <section className="hero" style={{ textAlign: "left" }}>
         <h2>Quick Start</h2>
         <p>
-          HackBLR is a voice-first developer assistant. It uses Vapi for voice calls and a custom LLM
+          Code Yapper is a voice-first developer assistant. It uses Vapi for voice calls and a custom LLM
           (Groq + Llama) with RAG over your code.
         </p>
       </section>
@@ -254,7 +254,7 @@ npm run dev`}</pre>
       </section>
 
       <footer className="footer">
-        <p>HackBLR - Voice-first developer assistant</p>
+        <p>Code Yapper - Voice-first developer assistant</p>
       </footer>
     </main>
   );

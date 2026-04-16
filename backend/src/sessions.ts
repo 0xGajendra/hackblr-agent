@@ -54,10 +54,9 @@ async function cleanupExpiredSessions(): Promise<void> {
   for (const session of expired) {
     try {
       await deleteSession(session.sessionId);
-      console.log(`🧹 Cleaned expired session: ${session.sessionId}`);
     } catch (err) {
       console.error(
-        `⚠️ Failed deleting expired session ${session.sessionId}:`,
+        `Failed deleting expired session ${session.sessionId}:`,
         err,
       );
     } finally {
@@ -68,7 +67,7 @@ async function cleanupExpiredSessions(): Promise<void> {
 
 const interval = setInterval(() => {
   cleanupExpiredSessions().catch((err) => {
-    console.error("⚠️ Session cleanup interval failed:", err);
+    console.error("Session cleanup interval failed:", err);
   });
 }, CLEANUP_INTERVAL_MS);
 

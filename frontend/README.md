@@ -1,6 +1,6 @@
-# HackBLR Frontend 🎤
+# Code Yapper Frontend 🎤
 
-Next.js frontend for HackBLR Dev Agent.
+Next.js frontend for Code Yapper.
 
 ## Setup
 
