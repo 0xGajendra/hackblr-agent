@@ -128,7 +128,15 @@ export default function HomePage() {
   const [sessionChunkCount, setSessionChunkCount] = useState<number | null>(
     null,
   );
-  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("theme");
+      if (stored === "dark" || stored === "light") return stored;
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      return prefersDark ? "dark" : "light";
+    }
+    return "light";
+  });
 
   const vapiRef = useRef<any>(null);
   const backendUrl =
@@ -140,6 +148,10 @@ export default function HomePage() {
     () => detectIntent(latestUserText || "explain this code"),
     [latestUserText],
   );
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
 
   useEffect(() => {
     let isMounted = true;
@@ -527,14 +539,17 @@ export default function HomePage() {
           <span>{currentIntent.toUpperCase()}</span>
         </div>
         <div className="buttons">
-          <button onClick={startCall} disabled={loading || isCallActive}>
+          <button onClick={startCall} disabled={isCallActive}>
             {isCallActive ? "Call Active" : "Start Call"}
           </button>
           <button className="secondary" onClick={stopCall} disabled={!isCallActive}>
             End Call
           </button>
         </div>
-        <small>{ingestStatus}</small>
+        <div>
+          <small>{ingestStatus}</small>
+          {loading && <span className="spinner" style={{ marginLeft: 8 }}></span>}
+        </div>
       </section>
 
       <div className="grid">
@@ -542,7 +557,7 @@ export default function HomePage() {
           <h3>Demo Codebases</h3>
           <div className="demoRow">
             {DEMO_CODEBASES.map((item, i) => (
-              <button key={item.label} className="secondary" onClick={() => ingestDemo(i)}>
+              <button key={item.label} className="secondary" onClick={() => previewDemo(i)}>
                 {item.label}
               </button>
             ))}
