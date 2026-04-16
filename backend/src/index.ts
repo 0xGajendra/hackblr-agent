@@ -60,7 +60,6 @@ type Intent = "error" | "audit" | "navigate" | "explain" | "debug";
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const MAX_SESSION_MESSAGES = 10;
 const sessions = new Map<string, Session>();
-const callToRagSession = new Map<string, string>();
 
 const DEBUG_FOLLOW_UPS = [
   "Can you tell me when this started happening?",
@@ -74,8 +73,7 @@ Your responses will be spoken aloud via text-to-speech, so:
 - Keep answers concise and conversational (2-4 sentences max)
 - No markdown, no bullet points, no code blocks
 - Speak like a senior dev helping a teammate
-- Only describe what you actually found in the provided code context - NEVER make up file names, functions, or implementation details that aren't in the context
-- If the context doesn't contain enough information to answer a question, say "I don't see that in the provided code" rather than guessing`;
+- If you found relevant code context, reference it naturally`;
 
 const INTENT_PROMPT_ADDONS: Record<Intent, string> = {
   error:
@@ -85,7 +83,7 @@ const INTENT_PROMPT_ADDONS: Record<Intent, string> = {
   navigate:
     "Help the developer find where something lives in the codebase. Reference exact file names from context.",
   explain:
-    "When explaining HOW the code was built: describe the actual code structure, functions, and logic you found in the context. Be specific - mention actual file names, function names, and how they work together. Don't make up details that aren't in the provided code.",
+    "Explain clearly how this works. Reference the actual code from context.",
   debug:
     "You are pair debugging. Ask targeted questions to narrow down the issue. Reference relevant code from context.",
 };
@@ -117,14 +115,6 @@ function getConversationSession(callId: string): Session {
   const created: Session = { messages: [], lastActive: Date.now() };
   sessions.set(callId, created);
   return created;
-}
-
-function setRagSession(callId: string, ragSessionId: string): void {
-  callToRagSession.set(callId, ragSessionId);
-}
-
-function getRagSession(callId: string): string | undefined {
-  return callToRagSession.get(callId);
 }
 
 function parseGithubRepo(
@@ -576,14 +566,10 @@ const handleLlmRequest = async (req: Request, res: Response) => {
     const incomingSessionId = req.body?.call?.metadata?.sessionId as
       | string
       | undefined;
-    const mappedSessionId = getRagSession(callId);
     const ragSessionId = isIngestionSessionReady(incomingSessionId)
       ? incomingSessionId
-      : isIngestionSessionReady(mappedSessionId)
-      ? mappedSessionId
       : undefined;
 
-    console.log(`🔍 /llm: callId=${callId}, incomingSessionId=${incomingSessionId}, mappedSessionId=${mappedSessionId}, resolvedRagSession=${ragSessionId}`);
     console.log(`🎯 Intent: ${intent}`);
     console.log(`🔑 Session: ${ragSessionId ?? "global"}`);
     console.log(
@@ -648,7 +634,7 @@ const handleLlmRequest = async (req: Request, res: Response) => {
     const promptWithContext =
       intent === "audit"
         ? `${AUDIT_PROMPT}\n\nCodebase context:\n${context}`
-        : `IMPORTANT: Only answer based on the EXACT code below. If the question cannot be answered from this code, say "I don't see that in the provided code." Do not guess or infer.\n\nCodebase context:\n${context}\n\nQuestion: ${userMessage}`;
+        : `Context:\n${context}\n\nQuestion: ${userMessage}`;
 
     const llmMessages: Message[] = [
       ...session.messages,
@@ -799,7 +785,6 @@ Start with "In this session,"`,
       }
 
       sessions.delete(callId);
-      callToRagSession.delete(callId);
       return res.json({ response: "ok" });
     }
 
@@ -807,13 +792,6 @@ Start with "In this session,"`,
       const userMessage = String(body?.message?.content || body?.message?.transcript || "").trim();
       const incomingSessionId = body?.call?.metadata?.sessionId as string | undefined;
       const ragSessionId = isIngestionSessionReady(incomingSessionId) ? incomingSessionId : undefined;
-
-      console.log(`🔍 Vapi webhook: callId=${callId}, incomingSessionId=${incomingSessionId}, ragSessionId=${ragSessionId}`);
-
-      if (callId && incomingSessionId) {
-        setRagSession(callId, incomingSessionId);
-        console.log(`🔗 Mapped call ${callId} -> RAG session ${incomingSessionId}`);
-      }
 
       if (!userMessage) {
         return res.json({ response: "I didn't catch that. Can you repeat?" });
@@ -852,7 +830,7 @@ Start with "In this session,"`,
         ...session.messages,
         { role: "user", content: promptWithContext },
       ];
-const maxTokens = intent === "audit" ? 300 : intent === "debug" ? 120 : intent === "explain" ? 200 : 150;
+      const maxTokens = intent === "audit" ? 300 : intent === "debug" ? 120 : 150;
 
       let answer = "";
       try {
