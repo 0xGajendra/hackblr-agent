@@ -584,8 +584,12 @@ const handleLlmRequest = async (req: Request, res: Response) => {
     
     const session = getConversationSession(callId);
     const intent = detectIntent(userMessage);
-    const incomingSessionId = req.body?.call?.metadata?.sessionId as string | undefined;
+    const incomingSessionId = req.body?.call?.metadata?.sessionId 
+      || req.body?.call?.sessionId 
+      || req.body?.metadata?.sessionId as string | undefined;
     console.log("[LLM] incomingSessionId from call.metadata:", incomingSessionId);
+    console.log("[LLM] incomingSessionId from call.sessionId:", req.body?.call?.sessionId);
+    console.log("[LLM] incomingSessionId from metadata:", req.body?.metadata?.sessionId);
     
     const mappedSessionId = getRagSession(callId);
     console.log("[LLM] mappedSessionId from callToRagSession:", mappedSessionId);
@@ -659,6 +663,8 @@ const handleLlmRequest = async (req: Request, res: Response) => {
       intent === "audit"
         ? `${AUDIT_PROMPT}\n\nCodebase context:\n${context}`
         : `Context:\n${context}\n\nQuestion: ${userMessage}`;
+
+    console.log("[LLM] promptWithContext:", promptWithContext);
 
     const llmMessages: Message[] = [
       ...session.messages,
@@ -862,6 +868,7 @@ Start with "In this session,"`,
           6000,
           "chat",
         );
+        console.log("[LLM] Raw LLM answer:", answer);
       } catch (chatErr) {
         console.error("Chat failed:", chatErr);
         answer = fallbackAssistantMessage(userMessage);
