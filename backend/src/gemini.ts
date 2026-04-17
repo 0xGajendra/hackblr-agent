@@ -38,15 +38,18 @@ export async function chat(
   messages: Message[],
   maxTokens = 150,
 ): Promise<string> {
+  console.log(` Calling Groq...`);
   try {
     const response = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      model: "llama-3.3-70b-versatile",
       messages: [{ role: "system", content: systemPrompt }, ...messages],
       max_tokens: maxTokens,
     });
-    return response.choices[0].message.content || "";
+    const answer = response.choices[0].message.content || "";
+    console.log(`✅ Got response from Groq:`, answer.slice(0, 100));
+    return answer;
   } catch (err) {
-    console.error("Groq API error:", err);
+    console.error("❌ Groq API error:", err);
     return "I'm having trouble connecting to my brain. Can you try again?";
   }
 }

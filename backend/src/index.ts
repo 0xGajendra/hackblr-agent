@@ -277,12 +277,15 @@ app.post("/ingest/paste", async (req: Request, res: Response) => {
     let meta = sessionId ? getIngestionSession(sessionId) : undefined;
     if (!meta) {
       sessionId = createIngestionSession("paste", filename);
+      console.log("[INGEST] Created new session:", sessionId);
       meta = getIngestionSession(sessionId);
     }
 
+    console.log("[INGEST] About to ingest into session:", sessionId);
     const chunks = await ingestChunks(sessionId, code, filename);
     const totalChunks = (meta?.chunkCount || 0) + chunks;
     markReady(sessionId, totalChunks);
+    console.log("[INGEST] Session marked ready:", sessionId, "totalChunks:", totalChunks);
 
     return res.json({
       sessionId,
@@ -564,6 +567,9 @@ const handleLlmRequest = async (req: Request, res: Response) => {
     const startedAt = Date.now();
     cleanupExpiredSessions();
 
+    console.log("[LLM] Raw request body keys:", Object.keys(req.body || {}));
+    console.log("[LLM] Full request body:", JSON.stringify(req.body, null, 2).slice(0, 1000));
+
     const requestMessages = (req.body?.messages || []) as {
       role: string;
       content: string;
@@ -572,21 +578,32 @@ const handleLlmRequest = async (req: Request, res: Response) => {
       [...requestMessages].reverse().find((m) => m.role === "user")?.content ||
       "";
     const callId = String(req.body?.call?.id || req.body?.callId || req.body?.id || "default-session");
+    console.log("[LLM] callId:", callId);
+    console.log("[LLM] call.metadata:", req.body?.call?.metadata);
+    console.log("[LLM] metadata:", req.body?.metadata);
+    
     const session = getConversationSession(callId);
     const intent = detectIntent(userMessage);
-    const incomingSessionId = req.body?.call?.metadata?.sessionId as
-      | string
-      | undefined;
+    const incomingSessionId = req.body?.call?.metadata?.sessionId as string | undefined;
+    console.log("[LLM] incomingSessionId from call.metadata:", incomingSessionId);
+    
     const mappedSessionId = getRagSession(callId);
+    console.log("[LLM] mappedSessionId from callToRagSession:", mappedSessionId);
+    console.log("[LLM] isIngestionSessionReady(incomingSessionId):", incomingSessionId ? isIngestionSessionReady(incomingSessionId) : "no sessionId");
+    console.log("[LLM] isIngestionSessionReady(mappedSessionId):", mappedSessionId ? isIngestionSessionReady(mappedSessionId) : "no sessionId");
+    
     let ragSessionId = isIngestionSessionReady(incomingSessionId)
       ? incomingSessionId
       : isIngestionSessionReady(mappedSessionId)
       ? mappedSessionId
       : undefined;
     
+    console.log("[LLM] Selected ragSessionId before fallback:", ragSessionId);
+    
     // Fallback to default session
     if (!ragSessionId) {
       ragSessionId = DEFAULT_RAG_SESSION;
+      console.log("[LLM] Fell back to DEFAULT_RAG_SESSION:", DEFAULT_RAG_SESSION);
     }
 
     let context = "No specific codebase context found.";
@@ -627,10 +644,14 @@ const handleLlmRequest = async (req: Request, res: Response) => {
         searchResultsCount = basic.resultsCount;
       }
     } catch (featureErr) {
-      console.error("RAG error:", featureErr);
+      console.error("[LLM] RAG error:", featureErr);
       context = "No codebase context available.";
       searchResultsCount = 0;
     }
+
+    console.log("[LLM] ragSessionId used for search:", ragSessionId);
+    console.log("[LLM] searchResultsCount:", searchResultsCount);
+    console.log("[LLM] context (first 200 chars):", context.slice(0, 200));
 
     const dynamicSystemPrompt = `${SYSTEM_PROMPT}\n\n${intentInstruction}`;
 
